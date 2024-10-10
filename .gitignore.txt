@@ -1,4 +1,0 @@
-parserxml/client_rawdata/*
-parserxml/raw_data.rar
-parserxml/HMC.xlsx
-parserxml/HMC_rule/*

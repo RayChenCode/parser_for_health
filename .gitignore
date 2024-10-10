@@ -1,0 +1,5 @@
+.gitignore.txt
+parser_for_health/*
+client_rawdata/*
+HMC_rule/*
+raw_data.rar
