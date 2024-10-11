@@ -516,7 +516,7 @@ func parseDiseaseHistory(label string, fields []string) (interface{}, error) {
 
 func parseFamilyHistory(label string, fields []string) (interface{}, error) {
 	// 定義需要檢查的關鍵詞
-	keywords := []string{"父親", "母親", "祖父母", "外組父母"}
+	keywords := []string{"父親", "母親", "祖父母", "外祖父母"}
 
 	// 檢查 fields 中是否包含任何關鍵詞
 	for _, field := range fields {
