@@ -13,11 +13,14 @@ import (
 	"time"
 )
 
+// 定義錯誤碼與對應的錯誤描述
 var errorMessages = map[string]string{
 	"E001": "XML 檔案讀取失敗",
-	"E002": "XML 格式解析失敗",
-	"E006": "GetDataResult JSON 解析失敗",
-	"E007": "病歷號無健檢紀錄",
+	"E002": "XML JSON格式解析失敗",
+	"E003": "TXT 檔案讀取失敗",
+	"E004": "TXT JSON格式解析失敗",
+	"E005": "GetDataResult JSON格式解析失敗",
+	"E006": "病歷號無健檢紀錄",
 
 	"E100": "解析資料時發生錯誤",
 	"E101": "解析資料必須至少有一個輸入欄位",
@@ -27,13 +30,14 @@ var errorMessages = map[string]string{
 	"E999": "未知的錯誤",
 }
 
+// 定義解析資料時 運行迴圈的必要資訊
 var operations = []struct {
 	parseFunc func(string, []string) (interface{}, error) // 解析函式
 	colLabel  string                                      // 解析欄位說明
 	colName   string                                      // 解析後要存入 parsedJSON 的欄位名稱
 	fields    []string                                    // 欄位名稱陣列
 }{
-	{calculateAge, "年齡", "Age", []string{"基本資料-出生日期", "基本資料-健檢日期"}},
+	{parseAge, "年齡", "Age", []string{"基本資料-出生日期", "基本資料-健檢日期"}},
 	{parseSex, "性別", "Sex", []string{"基本資料-性別"}},
 	{parseDiseaseHistory, "高血壓", "HT", []string{"過去疾病史-高血壓V3", "Medicine : 使用藥物-降血壓藥物V3"}},
 	{parseDiseaseHistory, "冠狀動脈疾病", "CAD", []string{"過去疾病史-冠狀動脈疾病V3"}},
@@ -183,6 +187,27 @@ var operations = []struct {
 		"PACS_相關影像檢查-心臟鈣化指數"}},
 }
 
+// 定義對應 XML 結構
+type Envelope struct {
+	Body Body `xml:"Body"`
+}
+
+// 定義對應 XML 的內部結構
+type Body struct {
+	GetDataResponse GetDataResponse `xml:"GetDataResponse"`
+}
+
+// 定義對應 XML 的GetDataResponse結構
+type GetDataResponse struct {
+	GetDataResult string `xml:"GetDataResult"`
+}
+
+// 定義回傳的 JSON 結構
+type GetDataResultJSON struct {
+	HaveData string            `json:"HaveData"`
+	Data     map[string]string `json:"Data"`
+}
+
 // 定義最終錯誤碼回傳格式
 type Result struct {
 	Errors       string                 `json:"error"`
@@ -208,31 +233,13 @@ func initResult() Result {
 	}
 }
 
+// 初始化 DataError 結構
 func initDataError() DataError {
 	return DataError{
 		Error:       "",
 		ErrorCode:   "",
 		ErrorDetail: "",
 	}
-}
-
-// 定義對應 XML 結構的 Go 結構體
-type Envelope struct {
-	Body Body `xml:"Body"`
-}
-
-type Body struct {
-	GetDataResponse GetDataResponse `xml:"GetDataResponse"`
-}
-
-type GetDataResponse struct {
-	GetDataResult string `xml:"GetDataResult"`
-}
-
-// 定義回傳的 JSON 結構
-type GetDataResultJSON struct {
-	HaveData string            `json:"HaveData"`
-	Data     map[string]string `json:"Data"`
 }
 
 // 讀取 XML 檔案
@@ -279,26 +286,142 @@ func readXmlFile(filePath string) (xmlData Envelope, result Result) {
 	return xmlData, result
 }
 
+// 讀取 TXT 檔案
 func readTxtFile(path string) (dataJSON map[string]string, result Result) {
 	// Initialize result
 	result = initResult()
+	var dataError DataError = initDataError()
 
 	// Read the file content
 	fileContent, err := os.ReadFile(path)
 	if err != nil {
-		result.Errors = fmt.Sprintf("Failed to read TXT file: %v", err)
-		return nil, result
+		result.ErrorsCode = "E003"
+		result.Errors = errorMessages[result.ErrorsCode]
+		dataError.ErrorDetail = err.Error()
+		result.ErrorsDetail["System"] = dataError
+		return dataJSON, result
 	}
 
 	// Unmarshal the JSON content into a map
 	err = json.Unmarshal(fileContent, &dataJSON)
 	if err != nil {
-		result.Errors = fmt.Sprintf("Failed to parse JSON content: %v", err)
-		return nil, result
+		result.ErrorsCode = "E004"
+		result.Errors = errorMessages[result.ErrorsCode]
+		dataError.ErrorDetail = err.Error()
+		result.ErrorsDetail["System"] = dataError
+		return dataJSON, result
 	}
 
 	// Successfully parsed JSON into a map
 	return dataJSON, result
+}
+
+// 抓取 GetDataResult 部分
+func extractGetDataResult(xmlData Envelope) (dataResult GetDataResultJSON, result Result) {
+	result = initResult()
+	var dataError DataError = initDataError()
+
+	// 取得 GetDataResult，這是一個 JSON 字串
+	getDataResult := xmlData.Body.GetDataResponse.GetDataResult
+
+	// 解析 GetDataResult 中的 JSON
+	err := json.Unmarshal([]byte(getDataResult), &dataResult)
+	if err != nil {
+		result.ErrorsCode = "E005"
+		result.Errors = errorMessages[result.ErrorsCode]
+		dataError.ErrorDetail = err.Error()
+		result.ErrorsDetail["System"] = dataError
+	}
+
+	return dataResult, result
+}
+
+// 確認屬性checkHaveData是否為"no"
+func checkHaveData(dataResult GetDataResultJSON) (dataJSON map[string]string, result Result) {
+	dataJSON = dataResult.Data
+	result = initResult()
+
+	// 如果 HaveData 是 "no"，則返回錯誤
+	if dataResult.HaveData == "no" {
+		result.ErrorsCode = "E006"
+		result.Errors = errorMessages[result.ErrorsCode]
+	}
+	return dataJSON, result
+}
+
+// 使用迴圈解析資料
+func extractdata(dataJSON *map[string]string) (result Result) {
+	parsedJSON := make(map[string]interface{})
+	dataErrorJSON := make(map[string]DataError)
+	var allSuccess bool = true
+	result = initResult()
+
+	// 使用迴圈來處理所有的解析
+	for _, op := range operations {
+		parseResult := parsedata(op.parseFunc, &parsedJSON, &dataErrorJSON, dataJSON, op.colLabel, op.colName, op.fields)
+		if !parseResult {
+			allSuccess = false
+		}
+	}
+
+	if !allSuccess {
+		result.ErrorsCode = "E100"
+		result.Errors = errorMessages[result.ErrorsCode]
+		// "解析資料時發生錯誤"
+	}
+
+	result.ErrorsDetail = dataErrorJSON
+	result.Data = parsedJSON
+	return result
+}
+
+// 包裝解析器
+func parsedata(parsefunction func(string, []string) (interface{}, error), parsedJSON *map[string]interface{}, dataErrorJSON *map[string]DataError, data *map[string]string, modelcollabel string, modelcolname string, defusedcolname []string) bool {
+	var dataError DataError = initDataError()
+	// 檢查 defusedcolname 是否至少包含一個欄位
+	if len(defusedcolname) < 1 {
+		dataError.ErrorCode = "E101"
+		dataError.Error = errorMessages[dataError.ErrorCode]
+		dataError.ErrorDetail = fmt.Sprintf("解析 %s / 輸出欄位【%s】時發生錯誤", modelcollabel, modelcolname)
+		(*dataErrorJSON)[modelcolname] = dataError
+		(*parsedJSON)[modelcolname] = nil
+		return false
+	}
+
+	var fieldValues []string
+	var missingFields []string // 收集缺失欄位
+	for _, colName := range defusedcolname {
+		if val, exists := (*data)[colName]; exists {
+			fieldValues = append(fieldValues, val)
+		} else {
+			missingFields = append(missingFields, colName) // 收集不存在的欄位
+		}
+	}
+
+	// 檢查是否有缺失欄位
+	if len(missingFields) > 0 {
+		dataError.ErrorCode = "E102"
+		dataError.Error = errorMessages[dataError.ErrorCode]
+		dataError.ErrorDetail = fmt.Sprintf("輸入欄位 %s 不存在", strings.Join(missingFields, ", ")) // 將缺失欄位列出
+		(*dataErrorJSON)[modelcolname] = dataError
+		(*parsedJSON)[modelcolname] = nil
+		return false
+	}
+
+	// 使用提供的 parsefunction 解析
+	parsedValue, err := parsefunction(modelcollabel, fieldValues)
+	if err != nil {
+		dataError.ErrorCode = "E103"
+		dataError.Error = fmt.Sprintf("無法解析 %s / 輸出欄位【%s】", modelcollabel, modelcolname)
+		dataError.ErrorDetail = err.Error()
+		(*dataErrorJSON)[modelcolname] = dataError
+		(*parsedJSON)[modelcolname] = nil
+		return false
+	}
+
+	// 成功解析，將結果存入指向的 parsedJSON
+	(*parsedJSON)[modelcolname] = parsedValue
+	return true
 }
 
 // 讀取文字轉成分鐘
@@ -381,110 +504,8 @@ func convertToScore(response string, categories []string, scores []int) (int, er
 	return 0, fmt.Errorf("無法解析回應: %s", response)
 }
 
-func extractGetDataResult(xmlData Envelope) (dataResult GetDataResultJSON, result Result) {
-	result = initResult()
-	var dataError DataError = initDataError()
-
-	// 取得 GetDataResult，這是一個 JSON 字串
-	getDataResult := xmlData.Body.GetDataResponse.GetDataResult
-
-	// 解析 GetDataResult 中的 JSON
-	err := json.Unmarshal([]byte(getDataResult), &dataResult)
-	if err != nil {
-		result.Errors = "GetDataResult JSON 解析失敗"
-		result.ErrorsCode = "E006"
-		dataError.ErrorDetail = err.Error()
-		result.ErrorsDetail["System"] = dataError
-	}
-	return dataResult, result
-}
-
-func checkHaveData(dataResult GetDataResultJSON) (dataJSON map[string]string, result Result) {
-	dataJSON = dataResult.Data
-	result = initResult()
-
-	// 如果 HaveData 是 "no"，則返回錯誤
-	if dataResult.HaveData == "no" {
-		result.ErrorsCode = "E007"
-		result.Errors = errorMessages[result.ErrorsCode]
-	}
-	return dataJSON, result
-}
-
-func extractdata(dataJSON *map[string]string) (result Result) {
-	parsedJSON := make(map[string]interface{})
-	dataErrorJSON := make(map[string]DataError)
-	var allSuccess bool = true
-	result = initResult()
-
-	// 使用迴圈來處理所有的解析
-	for _, op := range operations {
-		parseResult := parsedata(op.parseFunc, &parsedJSON, &dataErrorJSON, dataJSON, op.colLabel, op.colName, op.fields)
-		if !parseResult {
-			allSuccess = false
-		}
-	}
-
-	if !allSuccess {
-		result.ErrorsCode = "E100"
-		result.Errors = errorMessages[result.ErrorsCode]
-		// "解析資料時發生錯誤"
-	}
-
-	result.ErrorsDetail = dataErrorJSON
-	result.Data = parsedJSON
-	return result
-}
-
-func parsedata(parsefunction func(string, []string) (interface{}, error), parsedJSON *map[string]interface{}, dataErrorJSON *map[string]DataError, data *map[string]string, modelcollabel string, modelcolname string, defusedcolname []string) bool {
-	var dataError DataError = initDataError()
-	// 檢查 defusedcolname 是否至少包含一個欄位
-	if len(defusedcolname) < 1 {
-		dataError.ErrorCode = "E101"
-		dataError.Error = errorMessages[dataError.ErrorCode]
-		dataError.ErrorDetail = fmt.Sprintf("解析 %s / 輸出欄位【%s】時發生錯誤", modelcollabel, modelcolname)
-		(*dataErrorJSON)[modelcolname] = dataError
-		(*parsedJSON)[modelcolname] = nil
-		return false
-	}
-
-	var fieldValues []string
-	var missingFields []string // 收集缺失欄位
-	for _, colName := range defusedcolname {
-		if val, exists := (*data)[colName]; exists {
-			fieldValues = append(fieldValues, val)
-		} else {
-			missingFields = append(missingFields, colName) // 收集不存在的欄位
-		}
-	}
-
-	// 檢查是否有缺失欄位
-	if len(missingFields) > 0 {
-		dataError.ErrorCode = "E102"
-		dataError.Error = errorMessages[dataError.ErrorCode]
-		dataError.ErrorDetail = fmt.Sprintf("輸入欄位 %s 不存在", strings.Join(missingFields, ", ")) // 將缺失欄位列出
-		(*dataErrorJSON)[modelcolname] = dataError
-		(*parsedJSON)[modelcolname] = nil
-		return false
-	}
-
-	// 使用提供的 parsefunction 解析
-	parsedValue, err := parsefunction(modelcollabel, fieldValues)
-	if err != nil {
-		dataError.ErrorCode = "E103"
-		dataError.Error = fmt.Sprintf("無法解析 %s / 輸出欄位【%s】", modelcollabel, modelcolname)
-		dataError.ErrorDetail = err.Error()
-		(*dataErrorJSON)[modelcolname] = dataError
-		(*parsedJSON)[modelcolname] = nil
-		return false
-	}
-
-	// 成功解析，將結果存入指向的 parsedJSON
-	(*parsedJSON)[modelcolname] = parsedValue
-	return true
-}
-
-func calculateAge(label string, fields []string) (age interface{}, err error) {
+// parse__ 開頭的對應解析資料 __ (以下皆是)
+func parseAge(label string, fields []string) (age interface{}, err error) {
 	var numFields int = 2
 	if len(fields) != numFields {
 		return nil, fmt.Errorf("需要確切%d個輸入欄位來解析輸出欄位【%s】，而輸入為%d個", numFields, label, len(fields))
@@ -874,7 +895,7 @@ func parsePSQI(label string, fields []string) (interface{}, error) {
 	totalScore := 0
 
 	// 1. 睡眠時間 (題目 1)
-	sleepTimeCategories := []string{"少於5小時", "5-6小時", "6-7小時", "7小時以上"}
+	sleepTimeCategories := []string{"少於5小時", "5-6時", "6-7小時", "7小時以上"} // "5-6時" 並非 "5-6小時"
 	sleepTimeScores := []int{3, 2, 1, 0}
 	score, err := convertToScore(fields[0], sleepTimeCategories, sleepTimeScores)
 	if err != nil {
@@ -1166,6 +1187,7 @@ func parseAgatston(label string, fields []string) (interface{}, error) {
 	return finalScore, nil
 }
 
+// 處理例外錯誤
 func handlePanic(result *Result) {
 	var dataError DataError = initDataError()
 	if r := recover(); r != nil {
@@ -1177,6 +1199,7 @@ func handlePanic(result *Result) {
 	}
 }
 
+// 串接主流成
 func processFile(path string) (result Result) {
 	result = initResult()
 	defer handlePanic(&result)
@@ -1220,6 +1243,64 @@ func processFile(path string) (result Result) {
 		result.Errors = "Unsupported file format"
 		return result
 	}
+}
+
+// 主程式
+func main() {
+	var inputPath string
+
+	// 提示使用者輸入檔案路徑
+	fmt.Print("請輸入資料位址: ")
+	fmt.Scanf("%s", &inputPath)
+	inputPath = strings.Trim(inputPath, `"'`)
+
+	// 使用 filepath 清理路徑，確保格式正確
+	path := filepath.Clean(inputPath)
+	fmt.Printf("使用者輸入的路徑: %+v\n", path)
+
+	// 使用者輸入的路徑處理檔案
+	result := processFile(path)
+
+	var colNames []string
+	// 找出規格說明書的欄位順序
+	for _, op := range operations {
+		colNames = append(colNames, op.colName)
+	}
+
+	// 顯示照順序排列的解析後資料內容
+	for _, colName := range colNames {
+		if value, exists := result.Data[colName]; exists {
+			fmt.Printf("%s : %v\n", colName, value)
+		} else {
+			fmt.Printf("%s : 無對應資料\n", colName) // 如果 key 不存在則提示無對應資料
+		}
+	}
+
+	// 顯示錯誤結果
+	fmt.Println("錯誤描述:", result.Errors)
+	fmt.Println("錯誤代碼:", result.ErrorsCode)
+	fmt.Println("詳細錯誤：")
+
+	// 顯示欄位解析的詳細錯誤結果
+	for key, dataError := range result.ErrorsDetail {
+		fmt.Printf("\t【%s】\n", key)
+		fmt.Printf("\t\tError: %s\n", dataError.Error)
+		fmt.Printf("\t\tErrorCode: %s\n", dataError.ErrorCode)
+		fmt.Printf("\t\tErrorDetail: %s\n", dataError.ErrorDetail)
+	}
+
+	// // fmt.Println(result.Data)
+	// for key, value := range result.Data {
+	// 	fmt.Printf("%s : %v\n", key, value)
+	// }
+
+	// // to validate with the demo data
+	// csvFile := ".\\HMC_with_demo.csv"
+	// patientID := "2295117"
+	// err := compareCSVWithData(csvFile, patientID,  result.Data)
+	// if err != nil {
+	// 	log.Fatalf("Errors comparing CSV and data: %v", err)
+	// }
 }
 
 // // compareCSVWithData compares the CSV data with result.Data
@@ -1273,46 +1354,3 @@ func processFile(path string) (result Result) {
 
 // 	return nil
 // }
-
-func main() {
-	path := filepath.Join("client_rawdata", "error_test_demo.txt")
-	fmt.Printf("路徑: %+v\n", path)
-	// var dataMap map[string]interface{}
-	result := processFile(path)
-	fmt.Println("錯誤:", result.Errors)
-	fmt.Println("錯誤代碼:", result.ErrorsCode)
-	fmt.Println("詳細錯誤：")
-	for key, dataError := range result.ErrorsDetail {
-		fmt.Printf("\t【%s】\n", key)
-		fmt.Printf("\t\tError: %s\n", dataError.Error)
-		fmt.Printf("\t\tErrorCode: %s\n", dataError.ErrorCode)
-		fmt.Printf("\t\tErrorDetail: %s\n", dataError.ErrorDetail)
-	}
-
-	var colNames []string
-	// 使用迴圈遍歷並將 colName 存入新的切片
-	for _, op := range operations {
-		colNames = append(colNames, op.colName)
-	}
-
-	for _, colName := range colNames {
-		if value, exists := result.Data[colName]; exists {
-			fmt.Printf("%s : %v\n", colName, value)
-		} else {
-			fmt.Printf("%s : 無對應資料\n", colName) // 如果 key 不存在則提示無對應資料
-		}
-	}
-
-	// // fmt.Println(result.Data)
-	// for key, value := range result.Data {
-	// 	fmt.Printf("%s : %v\n", key, value)
-	// }
-
-	// // to validate with the demo data
-	// csvFile := ".\\HMC_with_demo.csv"
-	// patientID := "2295117"
-	// err := compareCSVWithData(csvFile, patientID,  result.Data)
-	// if err != nil {
-	// 	log.Fatalf("Errors comparing CSV and data: %v", err)
-	// }
-}
