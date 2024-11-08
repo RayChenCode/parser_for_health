@@ -37,8 +37,8 @@ var operations = []struct {
 	colName   string                                      // 解析後要存入 parsedJSON 的欄位名稱
 	fields    []string                                    // 欄位名稱陣列
 }{
-	{parseAge, "年齡", "Age", []string{"基本資料-出生日期", "基本資料-健檢日期"}},
-	{parseSex, "性別", "Sex", []string{"基本資料-性別"}},
+	{parseAge, "年齡", "age", []string{"基本資料-出生日期", "基本資料-健檢日期"}},
+	{parseSex, "性別", "sex", []string{"基本資料-性別"}},
 	{parseDiseaseHistory, "高血壓", "HT", []string{"過去疾病史-高血壓V3", "Medicine : 使用藥物-降血壓藥物V3"}},
 	{parseDiseaseHistory, "冠狀動脈疾病", "CAD", []string{"過去疾病史-冠狀動脈疾病V3"}},
 	{parseDiseaseHistory, "心律不整", "Arrhythmia", []string{"過去疾病史-心律不整V3"}},
@@ -78,7 +78,7 @@ var operations = []struct {
 	{parseDiseaseHistory, "胃或十二指腸潰瘍", "PUD", []string{"過去疾病史-胃或十二指腸潰瘍V3"}},
 	{parseDiseaseHistory, "B型肝炎帶原", "hepatitis_B", []string{"過去疾病史-B型肝炎帶原V3"}},
 	{parseDiseaseHistory, "C型肝炎帶原", "hepatitis_C", []string{"過去疾病史-C型肝炎帶原V3"}},
-	{parseDiseaseHistory, "肝硬化", "Liver cirrhosis", []string{"過去疾病史-肝硬化V3"}},
+	{parseDiseaseHistory, "肝硬化", "Liver_cirrhosis", []string{"過去疾病史-肝硬化V3"}},
 	{parseDiseaseHistory, "急性胰臟炎", "Acute_Pancreatitis", []string{"過去疾病史-急性胰臟炎V3"}},
 	{parseDiseaseHistory, "聽力障礙", "Hearing_impairments", []string{"過去疾病史-聽力障礙V3"}},
 	{parseDiseaseHistory, "鼻中隔彎曲", "NSD", []string{"過去疾病史-鼻中隔彎曲V3"}},
@@ -895,7 +895,7 @@ func parsePSQI(label string, fields []string) (interface{}, error) {
 	totalScore := 0
 
 	// 1. 睡眠時間 (題目 1)
-	sleepTimeCategories := []string{"少於5小時", "5-6時", "6-7小時", "7小時以上"} // "5-6時" 並非 "5-6小時"
+	sleepTimeCategories := []string{"少於5小時", "5-6", "6-7", "7小時以上"} // "5-6時" 並非 "5-6小時"
 	sleepTimeScores := []int{3, 2, 1, 0}
 	score, err := convertToScore(fields[0], sleepTimeCategories, sleepTimeScores)
 	if err != nil {
