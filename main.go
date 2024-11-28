@@ -498,6 +498,8 @@ func str2Day(timeStr string) (int, error) {
 
 // 轉換問題的回答為對應的分數
 func convertToScore(response string, categories []string, scores []int) (int, error) {
+	categories = append(categories, "")
+	scores = append(scores, 0)
 	for i, category := range categories {
 		if strings.Contains(response, category) {
 			return scores[i], nil
