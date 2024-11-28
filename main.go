@@ -5,6 +5,8 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -404,7 +406,7 @@ func parsedata(parsefunction func(string, []string) (interface{}, error), parsed
 		dataError.Error = errorMessages[dataError.ErrorCode]
 		dataError.ErrorDetail = fmt.Sprintf("輸入欄位 %s 不存在", strings.Join(missingFields, ", ")) // 將缺失欄位列出
 		(*dataErrorJSON)[modelcolname] = dataError
-		(*parsedJSON)[modelcolname] = nil
+		(*parsedJSON)[modelcolname] = 0
 		return false
 	}
 
@@ -415,7 +417,7 @@ func parsedata(parsefunction func(string, []string) (interface{}, error), parsed
 		dataError.Error = fmt.Sprintf("無法解析 %s / 輸出欄位【%s】", modelcollabel, modelcolname)
 		dataError.ErrorDetail = err.Error()
 		(*dataErrorJSON)[modelcolname] = dataError
-		(*parsedJSON)[modelcolname] = nil
+		(*parsedJSON)[modelcolname] = 0
 		return false
 	}
 
@@ -1287,6 +1289,19 @@ func main() {
 		fmt.Printf("\t\tError: %s\n", dataError.Error)
 		fmt.Printf("\t\tErrorCode: %s\n", dataError.ErrorCode)
 		fmt.Printf("\t\tErrorDetail: %s\n", dataError.ErrorDetail)
+	}
+
+	// output json result to client_rawdata_output
+	jsonResult, err := json.Marshal(result)
+	if err != nil {
+		log.Fatalf("Failed to marshal result to JSON: %v", err)
+	}
+
+	// client_rawdata_output/{{input_file_name}}.json
+	outputPath := fmt.Sprintf("client_rawdata_output/%s.json", filepath.Base(path))
+	err = ioutil.WriteFile(outputPath, jsonResult, 0644)
+	if err != nil {
+		log.Fatalf("Failed to write JSON result to file: %v", err)
 	}
 
 	// // fmt.Println(result.Data)
